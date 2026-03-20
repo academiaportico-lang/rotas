@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Sistema de Rotas Brasil</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f7fa; color: #333; font-size: 18px; }
+    h2 { text-align: center; color: #2c3e50; margin-bottom: 20px; font-size: 26px; }
+    .container { display: flex; justify-content: space-between; gap: 20px; }
+    .coluna { flex: 1; background: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); box-sizing: border-box; }
+    .coluna h3 { margin-top: 0; color: #2c3e50; font-size: 22px; }
+    .coluna input, .coluna button { width: 100%; box-sizing: border-box; margin-bottom: 12px; font-size: 18px; padding: 14px; }
+    button { background: #3498db; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #2980b9; }
+    #destinos { max-height: 350px; overflow-y: auto; padding-right: 5px; }
+    #destinos div { margin-bottom: 15px; padding-bottom: 10px; border-bottom: 10px solid red; }
+    #map { height: 500px; border: 2px solid #ccc; border-radius: 8px; margin-top: 20px; }
+    #resultado { margin-top: 10px; padding: 15px; background: #ecf0f1; border-radius: 6px; font-size: 18px; white-space: pre-line; }
+	
+	.spinner {
+  border: 6px solid #f3f3f3; /* cor de fundo */
+  border-top: 6px solid #3498db; /* cor da animação */
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin: auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+  </style>
+</head>
+<body>
+  <h2>Calcular rota e distância</h2>
+
+  <div class="container">
+    <!-- Origem -->
+    <div class="coluna">
+      <h3>Origem</h3>
+      <input id="cepOrigem" type="text" placeholder="CEP de origem">
+      <input id="numOrigem" type="text" placeholder="Número">
+      <button onclick="buscarEndereco('origem')">Buscar endereço origem</button>
+      <input id="origem" type="text" placeholder="Endereço origem" readonly>
+    </div>
+
+    <!-- Destinos -->
+    <div class="coluna">
+      <h3>Destinos</h3>
+      <div id="destinos">
+        <div>
+          <input id="cepDestino1" type="text" placeholder="CEP destino 1">
+          <input id="numDestino1" type="text" placeholder="Número destino 1">
+          <button onclick="buscarEnderecoDestino(1)">Buscar destino 1</button>
+          <input id="destino1" type="text" placeholder="Endereço destino 1" readonly>
+        </div>
+        <div>
+          <input id="cepDestino2" type="text" placeholder="CEP destino 2">
+          <input id="numDestino2" type="text" placeholder="Número destino 2">
+          <button onclick="buscarEnderecoDestino(2)">Buscar destino 2</button>
+          <input id="destino2" type="text" placeholder="Endereço destino 2" readonly>
+        </div>
+        <div>
+          <input id="cepDestino3" type="text" placeholder="CEP destino 3">
+          <input id="numDestino3" type="text" placeholder="Número destino 3">
+          <button onclick="buscarEnderecoDestino(3)">Buscar destino 3</button>
+          <input id="destino3" type="text" placeholder="Endereço destino 3" readonly>
+        </div>
+        <div>
+          <input id="cepDestino4" type="text" placeholder="CEP destino 4">
+          <input id="numDestino4" type="text" placeholder="Número destino 4">
+          <button onclick="buscarEnderecoDestino(4)">Buscar destino 4</button>
+          <input id="destino4" type="text" placeholder="Endereço destino 4" readonly>
+        </div>
+        <div>
+          <input id="cepDestino5" type="text" placeholder="CEP destino 5">
+          <input id="numDestino5" type="text" placeholder="Número destino 5">
+          <button onclick="buscarEnderecoDestino(5)">Buscar destino 5</button>
+          <input id="destino5" type="text" placeholder="Endereço destino 5" readonly>
+        </div>
+      </div>
+    </div>
+
+    <!-- Informações -->
+    <div class="coluna">
+      <h3>Informações</h3>
+      <button onclick="calcular()">Calcular rota</button>
+      <button onclick="novaRota()">Nova rota</button>
+      <div id="resultado"></div>
+    </div>
+  </div>
+  
+  <div id="loading" style="display:none; text-align:center; margin-top:10px;">
+  <div class="spinner"></div>
+  <p>Calculando rota...</p>
+</div>
+
+  <div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+let map = L.map('map').setView([-15.78, -47.93], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+
+let marcadorOrigem = null;
+let marcadoresDestino = [];
+let rotaLayer = null;
+
+async function buscarEndereco(tipo) {
+  const cep = document.getElementById("cep" + tipo.charAt(0).toUpperCase() + tipo.slice(1)).value;
+  const numero = document.getElementById("num" + tipo.charAt(0).toUpperCase() + tipo.slice(1)).value;
+  try {
+    const resp = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const data = await resp.json();
+    if (data.erro) throw new Error("CEP não encontrado");
+    const base = data.logradouro || data.bairro || data.localidade;
+    const enderecoCompleto = `${base || "Endereço"}, ${numero}, ${data.localidade}, ${data.uf}, Brasil`;
+    await geocodePhoton(enderecoCompleto);
+    document.getElementById(tipo).value = enderecoCompleto;
+  } catch (e) { alert("Erro: " + e.message); }
+}
+
+async function buscarEnderecoDestino(i) {
+  const cep = document.getElementById("cepDestino" + i).value;
+  const numero = document.getElementById("numDestino" + i).value;
+  try {
+    const resp = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const data = await resp.json();
+    if (data.erro) throw new Error("CEP não encontrado");
+    const base = data.logradouro || data.bairro || data.localidade;
+    const enderecoCompleto = `${base || "Endereço"}, ${numero}, ${data.localidade}, ${data.uf}, Brasil`;
+    await geocodePhoton(enderecoCompleto);
+    document.getElementById("destino" + i).value = enderecoCompleto;
+  } catch (e) { alert("Erro: " + e.message); }
+}
+
+async function geocodePhoton(endereco) {
+  let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(endereco)}&limit=1`;
+  let resp = await fetch(url);
+  let data = await resp.json();
+  if (!data.features || data.features.length === 0) {
+    const enderecoSemNumero = endereco.replace(/\d+/, "").trim();
+    url = `https://photon.komoot.io/api/?q=${encodeURIComponent(enderecoSemNumero)}&limit=1`;
+    resp = await fetch(url);
+    data = await resp.json();
+  }
+  if (!data.features || data.features.length === 0) throw new Error("Endereço não encontrado: " + endereco);
+  return { lng: data.features[0].geometry.coordinates[0], lat: data.features[0].geometry.coordinates[1] };
+}
+
+//Incio funca Calcular
+async function calcular() {
+  // mostra spinner
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("resultado").innerText = "";
+
+  try {
+    const origem = document.getElementById("origem").value;
+    const coordOrigem = await geocodePhoton(origem);
+
+    let destinos = [];
+    for (let i = 1; i <= 5; i++) {
+      const destino = document.getElementById("destino" + i).value;
+      if (destino && destino.trim() !== "") {
+        const coordDestino = await geocodePhoton(destino);
+        destinos.push({ endereco: destino, coord: coordDestino });
+      }
+    }
+
+    // ordenar pela proximidade da origem
+    destinos.sort((a, b) => {
+      const distA = Math.sqrt(Math.pow(a.coord.lat - coordOrigem.lat, 2) + Math.pow(a.coord.lng - coordOrigem.lng, 2));
+      const distB = Math.sqrt(Math.pow(b.coord.lat - coordOrigem.lat, 2) + Math.pow(b.coord.lng - coordOrigem.lng, 2));
+      return distA - distB;
+    });
+
+    // montar lista de coordenadas
+    let coords = [`${coordOrigem.lng},${coordOrigem.lat}`];
+    destinos.forEach(d => coords.push(`${d.coord.lng},${d.coord.lat}`));
+
+    // chamar OSRM
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coords.join(";")}?overview=full&geometries=geojson&steps=true`;
+    const osrmResp = await fetch(osrmUrl);
+    const osrmData = await osrmResp.json();
+
+    if (!osrmData.routes || osrmData.routes.length === 0) throw new Error("Não foi possível calcular rota");
+
+    const rota = osrmData.routes[0];
+    const km = (rota.distance / 1000).toFixed(2);
+
+    // duração em segundos → converter para horas e minutos
+    const duracaoSegundos = rota.duration;
+    const horas = Math.floor(duracaoSegundos / 3600);
+    const minutos = Math.round((duracaoSegundos % 3600) / 60);
+    const tempoHoras = (duracaoSegundos / 3600).toFixed(2);
+
+    // polilinha da rota
+    const coordsPolyline = rota.geometry.coordinates.map(c => [c[1], c[0]]);
+
+    // calcular bounding box da rota
+    const lats = coordsPolyline.map(c => c[0]);
+    const lngs = coordsPolyline.map(c => c[1]);
+    const latMin = Math.min(...lats);
+    const latMax = Math.max(...lats);
+    const lngMin = Math.min(...lngs);
+    const lngMax = Math.max(...lngs);
+
+    // consulta Overpass API para pedágios
+    const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];node["barrier"="toll_booth"](${latMin},${lngMin},${latMax},${lngMax});out;`;
+    const resp = await fetch(overpassUrl);
+    const data = await resp.json();
+
+    // função para calcular distância entre pontos
+    function distanciaEntrePontos(lat1, lon1, lat2, lon2) {
+      const R = 6371; // raio da Terra em km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a =
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c; // distância em km
+    }
+
+    function isNearRoute(point, polyline, maxDistKm) {
+      for (let i = 0; i < polyline.length; i++) {
+        const [lat, lon] = polyline[i];
+        const dist = distanciaEntrePontos(point[0], point[1], lat, lon);
+        if (dist <= maxDistKm) return true;
+      }
+      return false;
+    }
+
+    // filtrar pedágios próximos da rota (até 200m)
+    let pedagioCount = 0;
+    data.elements.forEach(p => {
+      const lat = p.lat;
+      const lon = p.lon;
+      if (isNearRoute([lat, lon], coordsPolyline, 0.2)) {
+        pedagioCount++;
+      }
+    });
+
+    // narrativa das principais estradas
+    let narrativa = "🛣️ Principais estradas:\n";
+    rota.legs.forEach(leg => {
+      leg.steps.forEach(step => {
+        if (step.name && step.name.length > 0) {
+          if (step.name.includes("Rodovia") || step.name.includes("BR") || step.name.includes("SP")) {
+            narrativa += `➡️ ${step.name}\n`;
+          }
+        }
+      });
+    });
+
+    // texto final
+    let texto = `📍 Origem: ${origem}\n`;
+    let destinoIndex = 1;
+    destinos.forEach(d => {
+      texto += `🚚 Destino ${destinoIndex}: ${d.endereco}\n`;
+      destinoIndex++;
+    });
+    texto += `\n📏 Distância total: ${km} km\n⏱️ Tempo estimado: ${horas}h ${minutos}min (${tempoHoras} horas)\n🚧 Pedágios encontrados na rota (OSM): ${pedagioCount}\n\n${narrativa}`;
+
+    // atualiza resultado
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("resultado").innerText = texto;
+
+    // limpar e desenhar no mapa
+    if (marcadorOrigem) map.removeLayer(marcadorOrigem);
+    marcadoresDestino.forEach(m => map.removeLayer(m));
+    if (rotaLayer) map.removeLayer(rotaLayer);
+
+    // ícones personalizados
+    const origemIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/25/25694.png',
+      iconSize: [40, 40],
+      iconAnchor: [20, 40],
+      popupAnchor: [0, -40]
+    });
+
+    const destinoIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/743/743922.png',
+      iconSize: [40, 40],
+      iconAnchor: [20, 40],
+      popupAnchor: [0, -40]
+    });
+
+    // origem destacada
+    marcadorOrigem = L.marker([coordOrigem.lat, coordOrigem.lng], { icon: origemIcon })
+      .addTo(map)
+      .bindPopup("📍 Origem")
+      .openPopup();
+
+    // destinos destacados
+    marcadoresDestino = [];
+    destinoIndex = 1;
+    destinos.forEach(d => {
+      const marker = L.marker([d.coord.lat, d.coord.lng], { icon: destinoIcon })
+        .addTo(map)
+        .bindPopup("🚚 Destino " + destinoIndex);
+      marcadoresDestino.push(marker);
+      destinoIndex++;
+    });
+
+    // desenhar rota
+    rotaLayer = L.polyline(coordsPolyline, { color: 'blue' }).addTo(map);
+    map.fitBounds(L.latLngBounds(coordsPolyline));
+
+  } catch (e) {
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("resultado").innerText = "❌ Erro: " + e.message;
+  }
+}
+
+//Fim funca Calcular
+
+function novaRota() {
+  document.getElementById("cepOrigem").value = "";
+  document.getElementById("numOrigem").value = "";
+  document.getElementById("origem").value = "";
+
+  for (let i = 1; i <= 5; i++) {
+    document.getElementById("cepDestino" + i).value = "";
+    document.getElementById("numDestino" + i).value = "";
+    document.getElementById("destino" + i).value = "";
+  }
+
+  document.getElementById("resultado").innerText = "";
+
+  if (marcadorOrigem) map.removeLayer(marcadorOrigem);
+  marcadoresDestino.forEach(m => map.removeLayer(m));
+  if (rotaLayer) map.removeLayer(rotaLayer);
+
+  map.setView([-15.78, -47.93], 5); // volta para visão Brasil
+}
+</script>
+</body>
+</html>
